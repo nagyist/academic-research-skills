@@ -63,7 +63,29 @@
         "superseded_by": { "type": ["string", "null"] },
         "version_family_id": { "type": ["string", "null"] },
         "version_catalog_completeness": { "enum": ["exhaustive", "partial", "unknown"] }
-      }
+      },
+      "allOf": [
+        {
+          "description": "open_ended:true is permitted ONLY on effective_date_range.end (spec §3.1 date shape table). Rejecting open_ended:true on start.",
+          "if": {
+            "required": ["effective_date_range"],
+            "properties": {
+              "effective_date_range": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "object",
+                    "properties": { "open_ended": { "const": true } },
+                    "required": ["open_ended"]
+                  }
+                },
+                "required": ["start"]
+              }
+            }
+          },
+          "then": { "not": {} }
+        }
+      ]
     },
     "timeline_event_entry": {
       "type": "object",

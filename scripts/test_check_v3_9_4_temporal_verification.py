@@ -84,3 +84,33 @@ def test_timeline_schema_validates_canonical_example():
         ],
     }
     jsonschema.validate(example, schema)
+
+
+def test_timeline_open_ended_only_on_end():
+    """open_ended:true on start date should be a schema violation per spec §3.1 date shape table."""
+    schema = _load_schema("timeline.schema.json")
+    bad = {
+        "schema_version": "1.0",
+        "sources": [
+            {
+                "citation_key": "x",
+                "type": "doc",
+                "effective_date_range": {
+                    "start": {
+                        "value": None,
+                        "precision": "unknown",
+                        "open_ended": True,
+                        "provenance": {"method": "unknown", "confidence": "unverified"},
+                    },
+                    "end": {
+                        "value": "2024-12-31",
+                        "precision": "day",
+                        "open_ended": False,
+                        "provenance": {"method": "crossref_lookup", "confidence": "high"},
+                    },
+                },
+            }
+        ],
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema)
