@@ -270,3 +270,41 @@ def test_temporal_audit_p1_requires_bound_dates():
     }
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)
+
+
+import subprocess
+import sys as _sys
+
+SCRIPT = REPO_ROOT / "scripts/check_v3_9_4_temporal_verification.py"
+
+
+def test_lint_exits_zero_on_clean_fixture(tmp_path):
+    """Lint should exit 0 when validating valid sample fixtures."""
+    timeline = tmp_path / "timeline.yaml"
+    timeline.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "sources": [],
+        "events": [],
+    }))
+    provenance = tmp_path / "citation_provenance.yaml"
+    provenance.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "entries": [],
+    }))
+    audit = tmp_path / "temporal_audit_results.yaml"
+    audit.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18",
+        "findings": [],
+    }))
+
+    result = subprocess.run(
+        [_sys.executable, str(SCRIPT),
+         "--timeline", str(timeline),
+         "--citation-provenance", str(provenance),
+         "--temporal-audit", str(audit)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
