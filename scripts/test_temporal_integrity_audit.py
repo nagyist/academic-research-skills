@@ -219,6 +219,39 @@ def test_positive_fixture_golden(tmp_path, fixture_name):
     assert actual == expected, f"diff for {fixture_name}:\nactual={actual}\nexpected={expected}"
 
 
+@pytest.mark.parametrize("fixture_name", [
+    "mode_1_legitimate",
+    "mode_2_legitimate",
+    "mode_3_legitimate",
+    "mode_4_legitimate",
+    "mode_5_legitimate",
+])
+def test_negative_fixture_golden(tmp_path, fixture_name):
+    """Legitimate prose fixtures: verifier output matches captured baseline (typically zero violation findings)."""
+    fixture_dir = FIXTURE_ROOT / fixture_name
+    out = tmp_path / "temporal_audit_results.yaml"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         "--draft", str(fixture_dir / "draft.md"),
+         "--timeline", str(fixture_dir / "timeline.yaml"),
+         "--citation-provenance", str(fixture_dir / "citation_provenance.yaml"),
+         "--output", str(out),
+         "--report-reference-date", "2026-05-18",
+         "--audit-run-id", "2026-05-18T12:34:56Z-a1b2"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"audit failed: stderr={result.stderr!r}"
+    actual = yaml.safe_load(out.read_text())
+    expected = yaml.safe_load((fixture_dir / "expected_temporal_audit_results.yaml").read_text())
+    assert actual == expected, f"diff for {fixture_name}: actual={actual}\nexpected={expected}"
+    # Optional: assert no Mode N findings for the matching mode
+    mode_n = int(fixture_name.split("_")[1])
+    mode_findings = [f for f in actual["findings"]
+                     if f.get("mode") == mode_n
+                     and f["finding_kind"] != "TEMPORAL-METADATA-MISSING"]
+    assert mode_findings == [], f"unexpected mode-{mode_n} violation: {mode_findings}"
+
+
 def test_audit_writes_markdown_report(tmp_path):
     """Audit must write phase4_composition/temporal_audit.md alongside the YAML."""
     (tmp_path / "draft.md").write_text("Currently, the framework is under review.\n")
