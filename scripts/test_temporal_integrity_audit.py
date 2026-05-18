@@ -90,3 +90,14 @@ def test_p1_future_as_past_emits_arithmetic_impossible(tmp_path):
     assert "2025-03" in first["bound_dates"]["left"]["value"]
     assert first["bound_dates"]["right"]["role"] == "event"
     assert "2025-06" in first["bound_dates"]["right"]["value"]
+
+
+def test_p1_prospective_already_past(tmp_path):
+    """Mode 1 Pattern B: forthcoming event but anchor is later than event date."""
+    result = _run_audit(
+        tmp_path,
+        draft="The June 2025 delivery to be completed by the project team, as of December 2025 the project is unfinished.\n",
+        timeline={"schema_version": "1.0", "sources": [], "events": []},
+    )
+    arith = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-ARITHMETIC-IMPOSSIBLE"]
+    assert len(arith) >= 1

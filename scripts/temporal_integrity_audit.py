@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -43,6 +44,14 @@ PATTERN_A = re.compile(
     r"(?P<anchor>" + DATE_REGEX + r")"
     r".*?\b(?:had already|already|completed|finished|delivered)\b.*?"
     r"(?P<event>" + DATE_REGEX + r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+PATTERN_B = re.compile(
+    r"(?P<event>" + DATE_REGEX + r")"
+    r".*?\b(?:will be|to be|scheduled for|forthcoming|upcoming|planned)\b.*?"
+    r"(?:as of|in|by)\s+"
+    r"(?P<anchor>" + DATE_REGEX + r")",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -70,6 +79,13 @@ def _date_to_interval(raw: str) -> tuple[str, str]:
     if re.fullmatch(r"(?:19|20)\d{2}", raw):
         return f"{raw}-01-01", f"{raw}-12-31"
     raise ValueError(f"unrecognized date format: {raw!r}")
+
+
+def _date_diff_days(a: str, b: str) -> int:
+    """Days between two YYYY-MM-DD strings (a - b)."""
+    da = date.fromisoformat(a)
+    db = date.fromisoformat(b)
+    return (da - db).days
 
 
 def _next_finding_id(findings: list[dict]) -> int:
@@ -125,56 +141,86 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
 
 
 def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
-    """P1 Mode 1 future-as-past arithmetic. Pattern A only in Task 12; Pattern B in Task 13."""
+    """P1 Mode 1 future-as-past arithmetic.
+
+    Pattern A: retrospective claim '(as of X) ... had already (Y)'; violation when event Y > anchor X.
+    Pattern B: prospective claim 'X (will be) ... (as of Y)'; violation when event X <= anchor Y.
+
+    If multiple violations match in the same sentence, emit the one with the largest
+    |event.start - anchor.end| gap (most clearly impossible).
+    """
     next_id = _next_finding_id(findings)
 
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
-        m = PATTERN_A.search(sentence)
-        if not m:
+        violations = []
+        m_a = PATTERN_A.search(sentence)
+        if m_a:
+            anchor_raw = m_a.group("anchor")
+            event_raw = m_a.group("event")
+            try:
+                anchor_start, anchor_end = _date_to_interval(anchor_raw)
+                event_start, event_end = _date_to_interval(event_raw)
+            except ValueError:
+                pass
+            else:
+                if event_start > anchor_end:
+                    violations.append(("A", anchor_raw, event_raw,
+                                       anchor_start, anchor_end, event_start, event_end))
+
+        m_b = PATTERN_B.search(sentence)
+        if m_b:
+            event_raw = m_b.group("event")
+            anchor_raw = m_b.group("anchor")
+            try:
+                anchor_start, anchor_end = _date_to_interval(anchor_raw)
+                event_start, event_end = _date_to_interval(event_raw)
+            except ValueError:
+                pass
+            else:
+                # Pattern B violation: forthcoming event already past at anchor time
+                if event_start <= anchor_end:
+                    violations.append(("B", anchor_raw, event_raw,
+                                       anchor_start, anchor_end, event_start, event_end))
+
+        if not violations:
             continue
-        anchor_raw = m.group("anchor")
-        event_raw = m.group("event")
-        try:
-            anchor_start, anchor_end = _date_to_interval(anchor_raw)
-            event_start, event_end = _date_to_interval(event_raw)
-        except ValueError:
-            continue
-        # Violation: event start strictly after anchor end
-        if event_start > anchor_end:
-            findings.append({
-                "finding_id": f"TF-{next_id:03d}",
-                "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
-                "severity": "HIGH",
-                "mode": 1,
-                "block_eligible": True,
-                "draft_locator": {
-                    "file": "phase4_composition/draft.md",
-                    "line": 1,
-                    "sentence": sentence.strip(),
-                },
-                "matched_span": None,
-                "bound_refs": [],
-                "bound_event": None,
-                "bound_dates": {
-                    "left": {"role": "anchor",
-                             "value": f"{anchor_start}..{anchor_end}",
-                             "source": "draft_capture",
-                             "ref_slug": None},
-                    "right": {"role": "event",
-                              "value": f"{event_start}..{event_end}",
-                              "source": "draft_capture",
-                              "ref_slug": None},
-                },
-                "rationale": (
-                    f"Anchor '{anchor_raw}' ({anchor_start}..{anchor_end}) is before "
-                    f"event '{event_raw}' ({event_start}..{event_end}); claim asserts event "
-                    f"already complete at anchor time but event has not yet occurred."
-                ),
-                "suggested_fix": (
-                    "Restate the claim to match the anchor's true time horizon, or hedge if the date is uncertain."
-                ),
-            })
-            next_id += 1
+
+        # Emit one finding per sentence — pick the largest-gap violation.
+        violations.sort(key=lambda v: abs(_date_diff_days(v[5], v[4])), reverse=True)
+        which, anchor_raw, event_raw, anchor_start, anchor_end, event_start, event_end = violations[0]
+        rationale = (
+            f"Pattern {which}: anchor '{anchor_raw}' ({anchor_start}..{anchor_end}) "
+            f"{'before' if which == 'A' else 'after'} event '{event_raw}' "
+            f"({event_start}..{event_end}); "
+            + ("event has not yet occurred at anchor time" if which == "A"
+               else "forthcoming event already past at anchor time")
+        )
+        findings.append({
+            "finding_id": f"TF-{next_id:03d}",
+            "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
+            "severity": "HIGH",
+            "mode": 1,
+            "block_eligible": True,
+            "draft_locator": {
+                "file": "phase4_composition/draft.md",
+                "line": 1,
+                "sentence": sentence.strip(),
+            },
+            "matched_span": None,
+            "bound_refs": [],
+            "bound_event": None,
+            "bound_dates": {
+                "left": {"role": "anchor",
+                         "value": f"{anchor_start}..{anchor_end}",
+                         "source": "draft_capture", "ref_slug": None},
+                "right": {"role": "event",
+                          "value": f"{event_start}..{event_end}",
+                          "source": "draft_capture", "ref_slug": None},
+            },
+            "rationale": rationale,
+            "suggested_fix": "Restate the claim to match the anchor's true time horizon, or hedge.",
+        })
+        next_id += 1
 
 
 def audit(draft: str, timeline: dict, citation_provenance: dict,
