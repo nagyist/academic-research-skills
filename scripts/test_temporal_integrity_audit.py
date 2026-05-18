@@ -43,3 +43,19 @@ def test_audit_scaffold_returns_empty_findings_on_empty_draft(tmp_path):
     assert result["audit_run_id"] == "2026-05-18T12:34:56Z-a1b2"
     assert result["report_reference_date"] == "2026-05-18"
     assert result["findings"] == []
+
+
+def test_p5_currently_emits_deictic_finding(tmp_path):
+    """Mode 5 time-bomb: 'currently' triggers TEMPORAL-DEICTIC."""
+    result = _run_audit(
+        tmp_path,
+        draft="Currently, the most recent edition prescribes annual review.\n",
+        timeline={"schema_version": "1.0", "sources": [], "events": []},
+    )
+    deictic = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-DEICTIC"]
+    assert len(deictic) >= 1, f"expected >=1 TEMPORAL-DEICTIC, got: {result['findings']}"
+    first = deictic[0]
+    assert first["mode"] == 5
+    assert first["severity"] == "LOW"
+    assert first["matched_span"] is not None
+    assert "currently" in first["matched_span"]["text"].lower()
