@@ -57,6 +57,22 @@ PATTERN_B = re.compile(
 
 REF_MARKER_PATTERN = re.compile(r"<!--ref:([A-Za-z][A-Za-z0-9_:-]*)-->")
 
+COMPARATOR_FORM_A = re.compile(
+    r"(?P<adj>prior|previous|earlier|older|preceding)\s+"
+    r"(?P<noun>edition|version|edition\s+\(\d{4}\)|version\s+\(\d{4}\))",
+    re.IGNORECASE,
+)
+COMPARATOR_FORM_B = re.compile(
+    r"\b(?P<year>(?:19|20)\d{2})\s+"
+    r"(?P<noun>edition|version|standard|handbook|guideline)\b",
+    re.IGNORECASE,
+)
+COMPARATOR_FORM_C = re.compile(
+    r"(?P<noun>edition|version|standard)\s+(?:of|from)\s+"
+    r"(?P<year>(?:19|20)\d{2})\b",
+    re.IGNORECASE,
+)
+
 MONTH_TO_NUM = {name.lower(): f"{i+1:02d}" for i, name in enumerate(MONTH_NAMES.split("|"))}
 LAST_DAY = {"01": "31", "02": "28", "03": "31", "04": "30", "05": "31", "06": "30",
             "07": "31", "08": "31", "09": "30", "10": "31", "11": "30", "12": "31"}
@@ -240,6 +256,92 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
             })
 
 
+def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None:
+    """P3 Mode 3 comparator unmaterialized.
+
+    Detects prose comparator framing (Form A: 'prior edition', Form B: 'YYYY edition',
+    Form C: 'edition of YYYY'). For each match, binds version_family_id via the
+    nearest <!--ref:slug--> in the sentence/paragraph. If no timeline entry in that
+    family has a matching year, emits TEMPORAL-COMPARATOR-UNMATERIALIZED.
+    """
+    sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
+    sources_by_family: dict[str, list[dict]] = {}
+    for s in timeline.get("sources", []):
+        fam = s.get("version_family_id")
+        if fam:
+            sources_by_family.setdefault(fam, []).append(s)
+
+    for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        sentence_emitted = False
+        for pattern_name, pat in [("A", COMPARATOR_FORM_A), ("B", COMPARATOR_FORM_B), ("C", COMPARATOR_FORM_C)]:
+            if sentence_emitted:
+                break
+            for m in pat.finditer(sentence):
+                # Resolve version_family_id via ref marker in sentence
+                refs_in_sentence = REF_MARKER_PATTERN.findall(sentence)
+                if not refs_in_sentence:
+                    continue  # binding ambiguous — emit no finding
+                bound_slug = refs_in_sentence[0]
+                bound_source = sources_by_key.get(bound_slug)
+                if not bound_source or not bound_source.get("version_family_id"):
+                    continue
+                family = bound_source["version_family_id"]
+
+                # Determine comparator year
+                if pattern_name == "A":
+                    year_match = re.search(
+                        r"\b(?:19|20)\d{2}\b",
+                        sentence[max(0, m.start() - 60):min(len(sentence), m.end() + 60)],
+                    )
+                    if not year_match:
+                        continue
+                    comparator_year = year_match.group(0)
+                else:
+                    comparator_year = m.group("year")
+
+                # Check whether any source in this family has matching published_date year
+                family_sources = sources_by_family.get(family, [])
+                matched = False
+                for s in family_sources:
+                    pd = s.get("published_date")
+                    if pd and pd.get("value") and comparator_year in pd["value"]:
+                        matched = True
+                        break
+
+                if not matched:
+                    next_id = _next_finding_id(findings)
+                    findings.append({
+                        "finding_id": f"TF-{next_id:03d}",
+                        "finding_kind": "TEMPORAL-COMPARATOR-UNMATERIALIZED",
+                        "severity": "MEDIUM",
+                        "mode": 3,
+                        "block_eligible": False,
+                        "draft_locator": {
+                            "file": "phase4_composition/draft.md", "line": 1,
+                            "sentence": sentence.strip(),
+                        },
+                        "matched_span": {
+                            "text": m.group(0),
+                            "char_start": m.start(),
+                            "char_end": m.end(),
+                        },
+                        "bound_refs": [{"ref_slug": bound_slug, "timeline_entry": bound_slug}],
+                        "bound_event": None,
+                        "bound_dates": None,
+                        "rationale": (
+                            f"Comparator '{m.group(0)}' (Form {pattern_name}, year={comparator_year}) "
+                            f"references version family '{family}' but no timeline entry exists for that year. "
+                            f"v3.9.4 reports this as claim-unsupported; v3.10 CC5 may escalate to phantom."
+                        ),
+                        "suggested_fix": (
+                            f"Either add a timeline entry for the {comparator_year} version of {family}, "
+                            f"or rewrite the prose to remove the comparator claim."
+                        ),
+                    })
+                    sentence_emitted = True
+                    break
+
+
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
     next_id = _next_finding_id(findings)
@@ -375,8 +477,9 @@ def audit(draft: str, timeline: dict, citation_provenance: dict,
     findings: list[dict] = []
     _pass_1_arithmetic(draft, findings)
     _pass_2_anachronism(draft, timeline, findings)
+    _pass_3_comparator(draft, timeline, findings)
     _pass_5_deictic(draft, findings)
-    # P3-P4 implemented in subsequent tasks.
+    # P4 implemented in Task 16.
     return {
         "schema_version": "1.0",
         "audit_run_id": audit_run_id,

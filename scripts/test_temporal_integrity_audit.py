@@ -137,3 +137,28 @@ def test_p2_2026_handbook_governing_2022_event(tmp_path):
     assert f0["mode"] == 2
     assert f0["bound_event"] is not None
     assert f0["bound_refs"][0]["ref_slug"] == "handbook-2026ed"
+
+
+def test_p3_unmaterialized_comparator(tmp_path):
+    """Mode 3: prose mentions '1998 edition' but timeline only has 2020 edition."""
+    result = _run_audit(
+        tmp_path,
+        draft="This differs from the 1998 edition of the standard.<!--ref:standard-2020ed-->\n",
+        timeline={
+            "schema_version": "1.0",
+            "sources": [{
+                "citation_key": "standard-2020ed",
+                "type": "standard",
+                "version_family_id": "standard-family",
+                "published_date": {
+                    "value": "2020-01-01", "precision": "year", "open_ended": False,
+                    "provenance": {"method": "user_override", "confidence": "high"},
+                },
+            }],
+            "events": [],
+        },
+    )
+    comparator = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-COMPARATOR-UNMATERIALIZED"]
+    assert len(comparator) == 1, f"expected 1 comparator finding, got: {result['findings']}"
+    assert comparator[0]["matched_span"] is not None
+    assert "1998" in comparator[0]["matched_span"]["text"]
