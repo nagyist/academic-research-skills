@@ -190,6 +190,35 @@ def test_p4_causal_inversion(tmp_path):
     assert f0["bound_dates"]["right"]["ref_slug"] == "policy-b"
 
 
+FIXTURE_ROOT = REPO_ROOT / "tests/fixtures/v3.9.4-temporal"
+
+
+@pytest.mark.parametrize("fixture_name", [
+    "mode_1_future_as_past",
+    "mode_2_version_as_evidence_past",
+    "mode_3_comparator_unmaterialized",
+    "mode_4_causal_inversion",
+    "mode_5_time_bomb",
+])
+def test_positive_fixture_golden(tmp_path, fixture_name):
+    fixture_dir = FIXTURE_ROOT / fixture_name
+    out = tmp_path / "temporal_audit_results.yaml"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         "--draft", str(fixture_dir / "draft.md"),
+         "--timeline", str(fixture_dir / "timeline.yaml"),
+         "--citation-provenance", str(fixture_dir / "citation_provenance.yaml"),
+         "--output", str(out),
+         "--report-reference-date", "2026-05-18",
+         "--audit-run-id", "2026-05-18T12:34:56Z-a1b2"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"stderr={result.stderr}"
+    actual = yaml.safe_load(out.read_text())
+    expected = yaml.safe_load((fixture_dir / "expected_temporal_audit_results.yaml").read_text())
+    assert actual == expected, f"diff for {fixture_name}:\nactual={actual}\nexpected={expected}"
+
+
 def test_audit_writes_markdown_report(tmp_path):
     """Audit must write phase4_composition/temporal_audit.md alongside the YAML."""
     (tmp_path / "draft.md").write_text("Currently, the framework is under review.\n")
