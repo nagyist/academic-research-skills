@@ -31,6 +31,46 @@ DEICTIC_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+MONTH_NAMES = "January|February|March|April|May|June|July|August|September|October|November|December"
+DATE_REGEX = (
+    r"\d{4}-\d{2}-\d{2}"
+    r"|(?:" + MONTH_NAMES + r")\s+\d{4}"
+    r"|(?:19|20)\d{2}"
+)
+
+PATTERN_A = re.compile(
+    r"(?:as of|on|in|reported in|stated in|noted in)\s+"
+    r"(?P<anchor>" + DATE_REGEX + r")"
+    r".*?\b(?:had already|already|completed|finished|delivered)\b.*?"
+    r"(?P<event>" + DATE_REGEX + r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+MONTH_TO_NUM = {name.lower(): f"{i+1:02d}" for i, name in enumerate(MONTH_NAMES.split("|"))}
+LAST_DAY = {"01": "31", "02": "28", "03": "31", "04": "30", "05": "31", "06": "30",
+            "07": "31", "08": "31", "09": "30", "10": "31", "11": "30", "12": "31"}
+
+
+def _date_to_interval(raw: str) -> tuple[str, str]:
+    """Normalize a date capture into (start, end) ISO 8601 day strings.
+
+    Handles 3 forms:
+    - YYYY-MM-DD → (date, date) point interval
+    - 'MonthName YYYY' → first of month .. last of month
+    - YYYY → YYYY-01-01 .. YYYY-12-31
+    """
+    raw = raw.strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return raw, raw
+    m = re.fullmatch(r"(" + MONTH_NAMES + r")\s+(\d{4})", raw, re.IGNORECASE)
+    if m:
+        mo = MONTH_TO_NUM[m.group(1).lower()]
+        yr = m.group(2)
+        return f"{yr}-{mo}-01", f"{yr}-{mo}-{LAST_DAY[mo]}"
+    if re.fullmatch(r"(?:19|20)\d{2}", raw):
+        return f"{raw}-01-01", f"{raw}-12-31"
+    raise ValueError(f"unrecognized date format: {raw!r}")
+
 
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
@@ -79,12 +119,67 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
         next_id += 1
 
 
+def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
+    """P1 Mode 1 future-as-past arithmetic. Pattern A only in Task 12; Pattern B in Task 13."""
+    counter = [int(f["finding_id"].split("-")[1]) for f in findings] or [0]
+    next_id = max(counter) + 1
+
+    for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        m = PATTERN_A.search(sentence)
+        if not m:
+            continue
+        anchor_raw = m.group("anchor")
+        event_raw = m.group("event")
+        try:
+            anchor_start, anchor_end = _date_to_interval(anchor_raw)
+            event_start, event_end = _date_to_interval(event_raw)
+        except ValueError:
+            continue
+        # Violation: event start strictly after anchor end
+        if event_start > anchor_end:
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
+                "severity": "HIGH",
+                "mode": 1,
+                "block_eligible": True,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md",
+                    "line": 1,
+                    "sentence": sentence.strip(),
+                },
+                "matched_span": None,
+                "bound_refs": [],
+                "bound_event": None,
+                "bound_dates": {
+                    "left": {"role": "anchor",
+                             "value": f"{anchor_start}..{anchor_end}",
+                             "source": "draft_capture",
+                             "ref_slug": None},
+                    "right": {"role": "event",
+                              "value": f"{event_start}..{event_end}",
+                              "source": "draft_capture",
+                              "ref_slug": None},
+                },
+                "rationale": (
+                    f"Anchor '{anchor_raw}' ({anchor_start}..{anchor_end}) is before "
+                    f"event '{event_raw}' ({event_start}..{event_end}); claim asserts event "
+                    f"already complete at anchor time but event has not yet occurred."
+                ),
+                "suggested_fix": (
+                    "Restate the claim to match the anchor's true time horizon, or hedge if the date is uncertain."
+                ),
+            })
+            next_id += 1
+
+
 def audit(draft: str, timeline: dict, citation_provenance: dict,
           report_reference_date: str, audit_run_id: str) -> dict:
     """Run the 5-pass verifier. Returns an aggregate matching temporal_audit_results.schema.json."""
     findings: list[dict] = []
+    _pass_1_arithmetic(draft, findings)
     _pass_5_deictic(draft, findings)
-    # P1-P4 implemented in subsequent tasks.
+    # P2-P4 implemented in subsequent tasks.
     return {
         "schema_version": "1.0",
         "audit_run_id": audit_run_id,

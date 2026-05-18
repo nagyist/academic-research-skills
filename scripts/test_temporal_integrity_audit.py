@@ -70,3 +70,23 @@ def test_p5_anchored_phrase_no_finding(tmp_path):
     )
     deictic = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-DEICTIC"]
     assert deictic == [], f"unexpected deictic findings: {deictic}"
+
+
+def test_p1_future_as_past_emits_arithmetic_impossible(tmp_path):
+    """Mode 1: 'As of March 2025, ... had already completed June 2025 deliverables' is physically impossible."""
+    result = _run_audit(
+        tmp_path,
+        draft="As of March 2025, the report noted that the system had already completed June 2025 deliverables.\n",
+        timeline={"schema_version": "1.0", "sources": [], "events": []},
+    )
+    arith = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-ARITHMETIC-IMPOSSIBLE"]
+    assert len(arith) == 1, f"expected 1 TEMPORAL-ARITHMETIC-IMPOSSIBLE, got: {result['findings']}"
+    first = arith[0]
+    assert first["mode"] == 1
+    assert first["severity"] == "HIGH"
+    assert first["bound_dates"] is not None
+    # anchor=March 2025, event=June 2025; event > anchor
+    assert first["bound_dates"]["left"]["role"] == "anchor"
+    assert "2025-03" in first["bound_dates"]["left"]["value"]
+    assert first["bound_dates"]["right"]["role"] == "event"
+    assert "2025-06" in first["bound_dates"]["right"]["value"]
