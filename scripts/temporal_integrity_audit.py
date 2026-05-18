@@ -73,6 +73,18 @@ COMPARATOR_FORM_C = re.compile(
     re.IGNORECASE,
 )
 
+# 8 verb-to-required-ordering triggers per spec §3.2 P4
+CAUSAL_TRIGGERS = [
+    (re.compile(r"\benabled\b", re.IGNORECASE), "left<right"),
+    (re.compile(r"\bcaused\b", re.IGNORECASE), "left<right"),
+    (re.compile(r"\bled\s+to\b", re.IGNORECASE), "left<right"),
+    (re.compile(r"\bin\s+response\s+to\b", re.IGNORECASE), "left>right"),
+    (re.compile(r"\bsuperseded\b", re.IGNORECASE), "left>right"),
+    (re.compile(r"\bpreceded\b", re.IGNORECASE), "left<right"),
+    (re.compile(r"\bfollowed\s+by\b", re.IGNORECASE), "left<right"),
+    (re.compile(r"\bfollowed\b(?!\s+by)", re.IGNORECASE), "left>right"),
+]
+
 MONTH_TO_NUM = {name.lower(): f"{i+1:02d}" for i, name in enumerate(MONTH_NAMES.split("|"))}
 LAST_DAY = {"01": "31", "02": "28", "03": "31", "04": "30", "05": "31", "06": "30",
             "07": "31", "08": "31", "09": "30", "10": "31", "11": "30", "12": "31"}
@@ -342,6 +354,88 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
                     break
 
 
+def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
+    """P4 Mode 4 causal inversion.
+
+    For each causal trigger phrase, identifies the nearest <!--ref:slug--> on either side.
+    Looks up both refs' published_date and verifies the required ordering.
+    If violated, emits TEMPORAL-CAUSAL-INVERSION with bound_dates.left/right.
+    Direct date capture (without refs) deferred to v3.10 M8 relation manifest.
+    """
+    sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
+
+    for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        for trigger_pat, required_order in CAUSAL_TRIGGERS:
+            m_trig = trigger_pat.search(sentence)
+            if not m_trig:
+                continue
+
+            pre = sentence[:m_trig.start()]
+            post = sentence[m_trig.end():]
+            left_refs = list(REF_MARKER_PATTERN.finditer(pre))
+            right_refs = list(REF_MARKER_PATTERN.finditer(post))
+            if not left_refs or not right_refs:
+                continue  # ambiguous binding — no finding in v3.9.4
+
+            left_slug = left_refs[-1].group(1)
+            right_slug = right_refs[0].group(1)
+            left_src = sources_by_key.get(left_slug)
+            right_src = sources_by_key.get(right_slug)
+            if not (left_src and right_src):
+                continue
+            left_pd = left_src.get("published_date", {}).get("value")
+            right_pd = right_src.get("published_date", {}).get("value")
+            if not (left_pd and right_pd):
+                continue
+            try:
+                left_start, _ = _date_to_interval(left_pd)
+                right_start, _ = _date_to_interval(right_pd)
+            except ValueError:
+                continue
+
+            violated = (
+                (required_order == "left<right" and left_start >= right_start)
+                or (required_order == "left>right" and left_start <= right_start)
+            )
+            if not violated:
+                continue
+
+            next_id = _next_finding_id(findings)
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-CAUSAL-INVERSION",
+                "severity": "MEDIUM",
+                "mode": 4,
+                "block_eligible": False,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md", "line": 1,
+                    "sentence": sentence.strip(),
+                },
+                "matched_span": {
+                    "text": m_trig.group(0),
+                    "char_start": m_trig.start(),
+                    "char_end": m_trig.end(),
+                },
+                "bound_refs": [
+                    {"ref_slug": left_slug, "timeline_entry": left_slug},
+                    {"ref_slug": right_slug, "timeline_entry": right_slug},
+                ],
+                "bound_event": None,
+                "bound_dates": {
+                    "left": {"role": "left_arg", "value": left_start,
+                             "source": "timeline_ref", "ref_slug": left_slug},
+                    "right": {"role": "right_arg", "value": right_start,
+                              "source": "timeline_ref", "ref_slug": right_slug},
+                },
+                "rationale": (
+                    f"Trigger '{m_trig.group(0)}' requires ordering {required_order}, "
+                    f"but left.date={left_start} and right.date={right_start} violate predicate."
+                ),
+                "suggested_fix": "Rewrite to match the actual ordering, or revise the causal claim.",
+            })
+            break  # one finding per sentence
+
+
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
     next_id = _next_finding_id(findings)
@@ -478,8 +572,8 @@ def audit(draft: str, timeline: dict, citation_provenance: dict,
     _pass_1_arithmetic(draft, findings)
     _pass_2_anachronism(draft, timeline, findings)
     _pass_3_comparator(draft, timeline, findings)
+    _pass_4_causal(draft, timeline, findings)
     _pass_5_deictic(draft, findings)
-    # P4 implemented in Task 16.
     return {
         "schema_version": "1.0",
         "audit_run_id": audit_run_id,

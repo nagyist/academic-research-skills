@@ -162,3 +162,29 @@ def test_p3_unmaterialized_comparator(tmp_path):
     assert len(comparator) == 1, f"expected 1 comparator finding, got: {result['findings']}"
     assert comparator[0]["matched_span"] is not None
     assert "1998" in comparator[0]["matched_span"]["text"]
+
+
+def test_p4_causal_inversion(tmp_path):
+    """Mode 4: 'Policy A enabled Policy B' but timeline has A AFTER B."""
+    result = _run_audit(
+        tmp_path,
+        draft="Policy A<!--ref:policy-a--> enabled Policy B<!--ref:policy-b-->.\n",
+        timeline={
+            "schema_version": "1.0",
+            "sources": [
+                {"citation_key": "policy-a", "type": "policy",
+                 "published_date": {"value": "2026-03-01", "precision": "day", "open_ended": False,
+                                    "provenance": {"method": "user_override", "confidence": "high"}}},
+                {"citation_key": "policy-b", "type": "policy",
+                 "published_date": {"value": "2020-05-15", "precision": "day", "open_ended": False,
+                                    "provenance": {"method": "user_override", "confidence": "high"}}},
+            ],
+            "events": [],
+        },
+    )
+    causal = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-CAUSAL-INVERSION"]
+    assert len(causal) == 1, f"expected 1 causal finding, got: {result['findings']}"
+    f0 = causal[0]
+    assert f0["bound_dates"] is not None
+    assert f0["bound_dates"]["left"]["ref_slug"] == "policy-a"
+    assert f0["bound_dates"]["right"]["ref_slug"] == "policy-b"
