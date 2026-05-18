@@ -72,10 +72,15 @@ def _date_to_interval(raw: str) -> tuple[str, str]:
     raise ValueError(f"unrecognized date format: {raw!r}")
 
 
+def _next_finding_id(findings: list[dict]) -> int:
+    """Compute the next sequential TF-NNN id (1-indexed) from existing findings."""
+    counter = [int(f["finding_id"].split("-")[1]) for f in findings] or [0]
+    return max(counter) + 1
+
+
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
-    counter = [int(f["finding_id"].split("-")[1]) for f in findings] or [0]
-    next_id = max(counter) + 1
+    next_id = _next_finding_id(findings)
 
     # Build a line index for draft_locator
     lines = draft.splitlines(keepends=True)
@@ -121,8 +126,7 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
 
 def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
     """P1 Mode 1 future-as-past arithmetic. Pattern A only in Task 12; Pattern B in Task 13."""
-    counter = [int(f["finding_id"].split("-")[1]) for f in findings] or [0]
-    next_id = max(counter) + 1
+    next_id = _next_finding_id(findings)
 
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
         m = PATTERN_A.search(sentence)
