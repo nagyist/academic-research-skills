@@ -401,3 +401,23 @@ def test_lint_bibliography_agent_modified_fails(tmp_path, monkeypatch):
         "--temporal-audit", str(audit),
     ])
     assert exit_code == 1, "expected exit 1 when sha256 baseline mismatches"
+
+
+def test_timeline_extraction_agent_has_phase_boundary_block():
+    agent_path = REPO_ROOT / "deep-research/agents/timeline_extraction_agent.md"
+    assert agent_path.exists(), "timeline_extraction_agent.md not created"
+    content = agent_path.read_text()
+    # 4 load-bearing keywords from canonical v3.9.4 boundary block
+    assert "## Phase Boundary (v3.9.4)" in content
+    assert "MUST NOT" in content
+    assert "MAY READ" in content
+    assert "Enforcement (v3.9.4)" in content
+    # M6 Citation Provenance Protocol section
+    assert "## Citation Provenance Protocol (v3.9.4)" in content
+
+
+def test_timeline_extraction_agent_lists_two_deliverables():
+    agent_path = REPO_ROOT / "deep-research/agents/timeline_extraction_agent.md"
+    content = agent_path.read_text()
+    assert "timeline.yaml" in content
+    assert "citation_provenance.yaml" in content
