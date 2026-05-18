@@ -421,3 +421,27 @@ def test_timeline_extraction_agent_lists_two_deliverables():
     content = agent_path.read_text()
     assert "timeline.yaml" in content
     assert "citation_provenance.yaml" in content
+
+
+M3_IRON_RULE_MARKER = "## Temporal Integrity Iron Rule (v3.9.4)"
+M3_KEY_PHRASES = [
+    "Temporal claims are arithmetic, not stylistic.",
+    "Identify the date or date range of every entity",
+    "verify the cited document existed BEFORE the event",
+]
+
+
+def test_m3_iron_rule_present_in_report_compiler():
+    path = REPO_ROOT / "deep-research/agents/report_compiler_agent.md"
+    content = path.read_text()
+    assert M3_IRON_RULE_MARKER in content
+    for phrase in M3_KEY_PHRASES:
+        assert phrase in content, f"missing phrase: {phrase}"
+
+
+def test_m3_iron_rule_present_in_draft_writer():
+    path = REPO_ROOT / "academic-paper/agents/draft_writer_agent.md"
+    content = path.read_text()
+    assert M3_IRON_RULE_MARKER in content
+    for phrase in M3_KEY_PHRASES:
+        assert phrase in content
