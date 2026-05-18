@@ -188,3 +188,32 @@ def test_p4_causal_inversion(tmp_path):
     assert f0["bound_dates"] is not None
     assert f0["bound_dates"]["left"]["ref_slug"] == "policy-a"
     assert f0["bound_dates"]["right"]["ref_slug"] == "policy-b"
+
+
+def test_audit_writes_markdown_report(tmp_path):
+    """Audit must write phase4_composition/temporal_audit.md alongside the YAML."""
+    (tmp_path / "draft.md").write_text("Currently, the framework is under review.\n")
+    (tmp_path / "timeline.yaml").write_text(yaml.safe_dump(
+        {"schema_version": "1.0", "sources": [], "events": []}))
+    (tmp_path / "citation_provenance.yaml").write_text(yaml.safe_dump(
+        {"schema_version": "1.0", "audit_run_id": "2026-05-18T12:34:56Z-a1b2", "entries": []}))
+    out_yaml = tmp_path / "temporal_audit_results.yaml"
+    out_md = tmp_path / "temporal_audit.md"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         "--draft", str(tmp_path / "draft.md"),
+         "--timeline", str(tmp_path / "timeline.yaml"),
+         "--citation-provenance", str(tmp_path / "citation_provenance.yaml"),
+         "--output", str(out_yaml),
+         "--markdown-output", str(out_md),
+         "--report-reference-date", "2026-05-18",
+         "--audit-run-id", "2026-05-18T12:34:56Z-a1b2"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"stderr={result.stderr}"
+    assert out_yaml.exists()
+    assert out_md.exists()
+    md = out_md.read_text()
+    assert "# Temporal Audit Results" in md
+    assert "TEMPORAL-DEICTIC" in md

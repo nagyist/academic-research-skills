@@ -137,6 +137,13 @@ def _next_finding_id(findings: list[dict]) -> int:
     return max(counter) + 1
 
 
+def _compute_line_number(draft: str, char_pos: int) -> int:
+    """Return 1-indexed line number of char_pos in draft."""
+    if char_pos <= 0:
+        return 1
+    return draft[:char_pos].count("\n") + 1
+
+
 def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
     """P1 Mode 1 future-as-past arithmetic.
 
@@ -146,7 +153,14 @@ def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
     If multiple violations match in the same sentence, emit the one with the largest
     |event.start - anchor.end| gap (most clearly impossible).
     """
+    pos = 0
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        sentence_start = draft.find(sentence, pos)
+        if sentence_start == -1:
+            sentence_start = pos
+        line_no = _compute_line_number(draft, sentence_start)
+        pos = sentence_start + len(sentence)
+
         violations = []
         m_a = PATTERN_A.search(sentence)
         if m_a:
@@ -198,7 +212,7 @@ def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
             "block_eligible": True,
             "draft_locator": {
                 "file": "phase4_composition/draft.md",
-                "line": 1,
+                "line": line_no,
                 "sentence": sentence.strip(),
             },
             "matched_span": None,
@@ -233,6 +247,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
     for m_ref in REF_MARKER_PATTERN.finditer(draft):
         slug = m_ref.group(1)
         source = sources_by_key.get(slug)
+        ref_line_no = _compute_line_number(draft, m_ref.start())
 
         if source is None:
             findings.append({
@@ -243,7 +258,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                 "block_eligible": False,
                 "draft_locator": {
                     "file": "phase4_composition/draft.md",
-                    "line": 1,
+                    "line": ref_line_no,
                     "sentence": _sentence_around(draft, m_ref.start()),
                 },
                 "matched_span": None,
@@ -264,7 +279,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                 "mode": None,
                 "block_eligible": False,
                 "draft_locator": {
-                    "file": "phase4_composition/draft.md", "line": 1,
+                    "file": "phase4_composition/draft.md", "line": ref_line_no,
                     "sentence": _sentence_around(draft, m_ref.start()),
                 },
                 "matched_span": None,
@@ -286,7 +301,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                 "mode": None,
                 "block_eligible": False,
                 "draft_locator": {
-                    "file": "phase4_composition/draft.md", "line": 1,
+                    "file": "phase4_composition/draft.md", "line": ref_line_no,
                     "sentence": _sentence_around(draft, m_ref.start()),
                 },
                 "matched_span": None,
@@ -333,7 +348,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                 "mode": 2,
                 "block_eligible": True,
                 "draft_locator": {
-                    "file": "phase4_composition/draft.md", "line": 1,
+                    "file": "phase4_composition/draft.md", "line": ref_line_no,
                     "sentence": _sentence_around(draft, m_ref.start()),
                 },
                 "matched_span": None,
@@ -367,7 +382,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                         "mode": 2,
                         "block_eligible": True,
                         "draft_locator": {
-                            "file": "phase4_composition/draft.md", "line": 1,
+                            "file": "phase4_composition/draft.md", "line": ref_line_no,
                             "sentence": _sentence_around(draft, m_ref.start()),
                         },
                         "matched_span": None,
@@ -401,7 +416,14 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
         if fam:
             sources_by_family.setdefault(fam, []).append(s)
 
+    pos = 0
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        sentence_start = draft.find(sentence, pos)
+        if sentence_start == -1:
+            sentence_start = pos
+        line_no = _compute_line_number(draft, sentence_start)
+        pos = sentence_start + len(sentence)
+
         for pattern_name, pat in [("A", COMPARATOR_FORM_A), ("B", COMPARATOR_FORM_B), ("C", COMPARATOR_FORM_C)]:
             for m in pat.finditer(sentence):
                 # Resolve version_family_id via ref marker in sentence
@@ -443,7 +465,7 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
                         "mode": 3,
                         "block_eligible": False,
                         "draft_locator": {
-                            "file": "phase4_composition/draft.md", "line": 1,
+                            "file": "phase4_composition/draft.md", "line": line_no,
                             "sentence": sentence.strip(),
                         },
                         "matched_span": {
@@ -477,7 +499,14 @@ def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
     """
     sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
 
+    pos = 0
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        sentence_start = draft.find(sentence, pos)
+        if sentence_start == -1:
+            sentence_start = pos
+        line_no = _compute_line_number(draft, sentence_start)
+        pos = sentence_start + len(sentence)
+
         for trigger_pat, required_order in CAUSAL_TRIGGERS:
             m_trig = trigger_pat.search(sentence)
             if not m_trig:
@@ -520,7 +549,7 @@ def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
                 "mode": 4,
                 "block_eligible": False,
                 "draft_locator": {
-                    "file": "phase4_composition/draft.md", "line": 1,
+                    "file": "phase4_composition/draft.md", "line": line_no,
                     "sentence": sentence.strip(),
                 },
                 "matched_span": {
@@ -550,22 +579,11 @@ def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
 
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
-    # Build a line index for draft_locator
     lines = draft.splitlines(keepends=True)
-    offsets: list[int] = []
-    cur = 0
-    for line in lines:
-        offsets.append(cur)
-        cur += len(line)
 
     for m in DEICTIC_PATTERN.finditer(draft):
-        char_start = m.start()
-        line_no = 0
-        for i, off in enumerate(offsets):
-            if off > char_start:
-                break
-            line_no = i
-        line_text = lines[line_no].rstrip("\n") if line_no < len(lines) else ""
+        line_no = _compute_line_number(draft, m.start())
+        line_text = lines[line_no - 1].rstrip("\n") if line_no <= len(lines) else ""
 
         findings.append({
             "finding_id": f"TF-{_next_finding_id(findings):03d}",
@@ -575,7 +593,7 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
             "block_eligible": False,
             "draft_locator": {
                 "file": "phase4_composition/draft.md",
-                "line": line_no + 1,
+                "line": line_no,
                 "sentence": line_text,
             },
             "matched_span": {
@@ -608,12 +626,42 @@ def audit(draft: str, timeline: dict, citation_provenance: dict,
     }
 
 
+def _render_markdown(result: dict) -> str:
+    """Render the temporal audit results dict as a human-readable Markdown report."""
+    lines = [
+        "# Temporal Audit Results",
+        "",
+        f"- audit_run_id: `{result['audit_run_id']}`",
+        f"- report_reference_date: `{result['report_reference_date']}`",
+        f"- total findings: **{len(result['findings'])}**",
+        "",
+    ]
+    if not result["findings"]:
+        lines.append("_No temporal-integrity findings in this draft._")
+        return "\n".join(lines) + "\n"
+    for f in result["findings"]:
+        lines.extend([
+            f"## {f['finding_id']} — {f['finding_kind']} ({f['severity']})",
+            "",
+            f"- mode: {f['mode']}",
+            f"- file: `{f['draft_locator']['file']}` line {f['draft_locator']['line']}",
+            f"- sentence: \"{f['draft_locator']['sentence']}\"",
+            f"- rationale: {f['rationale']}",
+        ])
+        if f.get("suggested_fix"):
+            lines.append(f"- suggested fix: {f['suggested_fix']}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="v3.9.4 temporal integrity verifier (Phase 4 → 5 boundary)")
     parser.add_argument("--draft", type=Path, required=True)
     parser.add_argument("--timeline", type=Path, required=True)
     parser.add_argument("--citation-provenance", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--markdown-output", type=Path, default=None,
+                        help="Optional path for human-readable .md report")
     parser.add_argument("--report-reference-date", required=True)
     parser.add_argument("--audit-run-id", required=True)
     args = parser.parse_args(argv)
@@ -626,6 +674,8 @@ def main(argv: list[str] | None = None) -> int:
                    args.report_reference_date, args.audit_run_id)
 
     args.output.write_text(yaml.safe_dump(result, sort_keys=False))
+    if args.markdown_output:
+        args.markdown_output.write_text(_render_markdown(result))
     return 0
 
 
