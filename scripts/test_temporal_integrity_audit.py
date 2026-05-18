@@ -59,3 +59,14 @@ def test_p5_currently_emits_deictic_finding(tmp_path):
     assert first["severity"] == "LOW"
     assert first["matched_span"] is not None
     assert "currently" in first["matched_span"]["text"].lower()
+
+
+def test_p5_anchored_phrase_no_finding(tmp_path):
+    """Mode 5 legitimate: 'As of 2026-05-18, the 2024 edition prescribes' must NOT trigger."""
+    result = _run_audit(
+        tmp_path,
+        draft="As of 2026-05-18, the 2024 edition prescribes annual review.\n",
+        timeline={"schema_version": "1.0", "sources": [], "events": []},
+    )
+    deictic = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-DEICTIC"]
+    assert deictic == [], f"unexpected deictic findings: {deictic}"
