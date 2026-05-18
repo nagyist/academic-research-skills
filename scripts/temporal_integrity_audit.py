@@ -55,6 +55,8 @@ PATTERN_B = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+REF_MARKER_PATTERN = re.compile(r"<!--ref:([A-Za-z][A-Za-z0-9_:-]*)-->")
+
 MONTH_TO_NUM = {name.lower(): f"{i+1:02d}" for i, name in enumerate(MONTH_NAMES.split("|"))}
 LAST_DAY = {"01": "31", "02": "28", "03": "31", "04": "30", "05": "31", "06": "30",
             "07": "31", "08": "31", "09": "30", "10": "31", "11": "30", "12": "31"}
@@ -88,10 +90,154 @@ def _date_diff_days(a: str, b: str) -> int:
     return (da - db).days
 
 
+def _sentence_around(draft: str, char_pos: int) -> str:
+    """Extract the sentence containing char_pos."""
+    pre = draft[:char_pos]
+    post = draft[char_pos:]
+    # Find last sentence terminator before char_pos
+    m_pre = re.search(r"[.!?]\s+(?=\S)", pre[::-1])
+    start = char_pos - m_pre.start() if m_pre else 0
+    # Find next sentence terminator at/after char_pos
+    m_post = re.search(r"[.!?](\s|$)", post)
+    end = char_pos + m_post.end() if m_post else len(draft)
+    return draft[start:end].strip()
+
+
 def _next_finding_id(findings: list[dict]) -> int:
     """Compute the next sequential TF-NNN id (1-indexed) from existing findings."""
     counter = [int(f["finding_id"].split("-")[1]) for f in findings] or [0]
     return max(counter) + 1
+
+
+def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> None:
+    """P2 Mode 2 version-as-evidence-past anachronism.
+
+    For each <!--ref:slug--> marker:
+    1. Lookup slug in timeline sources. Absent → emit TEMPORAL-METADATA-MISSING.
+    2. Lookup effective_date_range. Absent or start unverified/low → emit METADATA-MISSING.
+    3. Find nearest event date in ±200 chars around the ref marker.
+    4. Predicate: start > event.end → emit TEMPORAL-ANACHRONISTIC-CITATION.
+    """
+    sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
+
+    for m_ref in REF_MARKER_PATTERN.finditer(draft):
+        slug = m_ref.group(1)
+        source = sources_by_key.get(slug)
+
+        next_id = _next_finding_id(findings)
+
+        if source is None:
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-METADATA-MISSING",
+                "severity": "LOW",
+                "mode": None,
+                "block_eligible": False,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md",
+                    "line": 1,
+                    "sentence": _sentence_around(draft, m_ref.start()),
+                },
+                "matched_span": None,
+                "bound_refs": [{"ref_slug": slug, "timeline_entry": None}],
+                "bound_event": None,
+                "bound_dates": None,
+                "rationale": f"<!--ref:{slug}--> has no entry in timeline.yaml; cannot verify temporal claims against this citation.",
+                "suggested_fix": None,
+            })
+            continue
+
+        edr = source.get("effective_date_range")
+        if not edr:
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-METADATA-MISSING",
+                "severity": "LOW",
+                "mode": None,
+                "block_eligible": False,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md", "line": 1,
+                    "sentence": _sentence_around(draft, m_ref.start()),
+                },
+                "matched_span": None,
+                "bound_refs": [{"ref_slug": slug, "timeline_entry": slug}],
+                "bound_event": None,
+                "bound_dates": None,
+                "rationale": f"{slug} has no effective_date_range; anachronism check cannot run.",
+                "suggested_fix": None,
+            })
+            continue
+
+        start = edr["start"]
+        start_conf = start.get("provenance", {}).get("confidence")
+        if start.get("value") is None or start_conf in {"unverified", "low"}:
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-METADATA-MISSING",
+                "severity": "LOW",
+                "mode": None,
+                "block_eligible": False,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md", "line": 1,
+                    "sentence": _sentence_around(draft, m_ref.start()),
+                },
+                "matched_span": None,
+                "bound_refs": [{"ref_slug": slug, "timeline_entry": slug}],
+                "bound_event": None,
+                "bound_dates": None,
+                "rationale": f"{slug} effective_date_range.start absent or low/unverified confidence; cannot verify anachronism.",
+                "suggested_fix": None,
+            })
+            continue
+
+        # Find nearest event date in ±200 chars around ref marker
+        # Exclude dates that overlap the ref marker itself (slug digits are not event dates)
+        window_start = max(0, m_ref.start() - 200)
+        window_end = min(len(draft), m_ref.end() + 200)
+        window = draft[window_start:window_end]
+        date_pattern = re.compile(DATE_REGEX, re.IGNORECASE)
+        # Compute ref marker span relative to window
+        ref_in_window_start = m_ref.start() - window_start
+        ref_in_window_end = m_ref.end() - window_start
+        event_dates = [
+            d for d in date_pattern.finditer(window)
+            if d.end() <= ref_in_window_start or d.start() >= ref_in_window_end
+        ]
+        if not event_dates:
+            continue  # no event date → no finding
+
+        # Pick closest to the ref marker position within the window
+        rel_ref = m_ref.start() - window_start
+        nearest = min(event_dates, key=lambda d: abs(d.start() - rel_ref))
+        event_raw = nearest.group(0)
+        try:
+            event_start, event_end = _date_to_interval(event_raw)
+            edr_start_start, _ = _date_to_interval(start["value"])
+        except ValueError:
+            continue
+
+        # Future-version check: start > event.end
+        if edr_start_start > event_end:
+            findings.append({
+                "finding_id": f"TF-{next_id:03d}",
+                "finding_kind": "TEMPORAL-ANACHRONISTIC-CITATION",
+                "severity": "HIGH",
+                "mode": 2,
+                "block_eligible": True,
+                "draft_locator": {
+                    "file": "phase4_composition/draft.md", "line": 1,
+                    "sentence": _sentence_around(draft, m_ref.start()),
+                },
+                "matched_span": None,
+                "bound_refs": [{"ref_slug": slug, "timeline_entry": slug}],
+                "bound_event": {"event_id": None, "date": f"{event_start}..{event_end}"},
+                "bound_dates": None,
+                "rationale": (
+                    f"{slug} effective_date_range starts {start['value']}, after cited "
+                    f"event {event_raw} ({event_start}..{event_end}). Cited version postdates the event."
+                ),
+                "suggested_fix": f"Cite the version of the source that was in effect during {event_raw}.",
+            })
 
 
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
@@ -228,8 +374,9 @@ def audit(draft: str, timeline: dict, citation_provenance: dict,
     """Run the 5-pass verifier. Returns an aggregate matching temporal_audit_results.schema.json."""
     findings: list[dict] = []
     _pass_1_arithmetic(draft, findings)
+    _pass_2_anachronism(draft, timeline, findings)
     _pass_5_deictic(draft, findings)
-    # P2-P4 implemented in subsequent tasks.
+    # P3-P4 implemented in subsequent tasks.
     return {
         "schema_version": "1.0",
         "audit_run_id": audit_run_id,

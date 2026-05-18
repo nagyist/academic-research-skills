@@ -101,3 +101,39 @@ def test_p1_prospective_already_past(tmp_path):
     )
     arith = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-ARITHMETIC-IMPOSSIBLE"]
     assert len(arith) >= 1
+
+
+def test_p2_2026_handbook_governing_2022_event(tmp_path):
+    """Mode 2: 2026 handbook cited for 2022 review cycle → anachronism."""
+    result = _run_audit(
+        tmp_path,
+        draft="The 2026 Handbook governed the 2022 review cycle.<!--ref:handbook-2026ed-->\n",
+        timeline={
+            "schema_version": "1.0",
+            "sources": [{
+                "citation_key": "handbook-2026ed",
+                "type": "institutional-document",
+                "published_date": {
+                    "value": "2026-09-15", "precision": "day", "open_ended": False,
+                    "provenance": {"method": "crossref_lookup", "confidence": "high"},
+                },
+                "effective_date_range": {
+                    "start": {
+                        "value": "2026-09-15", "precision": "day", "open_ended": False,
+                        "provenance": {"method": "crossref_lookup", "confidence": "high"},
+                    },
+                    "end": {
+                        "value": None, "precision": "unknown", "open_ended": True,
+                        "provenance": {"method": "user_override", "confidence": "high"},
+                    },
+                },
+            }],
+            "events": [],
+        },
+    )
+    anachronism = [f for f in result["findings"] if f["finding_kind"] == "TEMPORAL-ANACHRONISTIC-CITATION"]
+    assert len(anachronism) == 1, f"expected 1 anachronism, got: {result['findings']}"
+    f0 = anachronism[0]
+    assert f0["mode"] == 2
+    assert f0["bound_event"] is not None
+    assert f0["bound_refs"][0]["ref_slug"] == "handbook-2026ed"
