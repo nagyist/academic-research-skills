@@ -8,6 +8,28 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [3.9.4] - 2026-05-18 — Temporal Verification Layer (advisory)
+
+**External motivation:** Issue #135 — LLM next-token objectives are systematically blind to deterministic factual classes including temporal ordering. v3.9.4 adds a deterministic advisory verifier at the Phase 4 → 5 boundary covering 5 failure modes.
+
+**Mechanisms:**
+- M1: new Phase 2 sibling `timeline_extraction_agent` owning `phase2_investigation/timeline.yaml` + `phase2_investigation/citation_provenance.yaml`
+- M2: Phase 4 → 5 deterministic verifier `scripts/temporal_integrity_audit.py` (5 passes)
+- M3: Temporal Integrity Iron Rule in `report_compiler_agent` + `draft_writer_agent`
+- M6-minimal: First-party Crossref `issued` + pdftotext cover verification
+- M7-minimal: Date provenance + comparator materialization
+- M5-stub: User-declared `version_family_id` only
+
+**Zero modification** to `literature_corpus_entry`, `claim_audit_result`, `claim_intent_manifest`. `bibliography_agent` unmodified (F2 invariant). 3 new sidecar schemas (aggregate-level with `$defs`).
+
+**Coverage estimate:** 55-70% baseline / 65-75% with M7 minimal (LLM extractor blindness on tuple extraction is structural; advisory architecture acknowledges this).
+
+**Out of v3.9.4 scope** (deferred to v3.10): M4 reviewer integration, M5 full version discovery, M6 full PDF audit, M8 relation manifest, CC5 catalog-completeness semantics, hard-block policy, OpenAlex lookup.
+
+Spec: `docs/design/2026-05-18-ars-v3.9.4-temporal-verification-spec.md`.
+
+---
+
 ## [3.9.3] - 2026-05-18 — Housekeeping (#128 §1-3, §5-6)
 
 Pure refactor + one latent-bug fix carrying over from the v3.9.0 `/simplify` review backlog. The v3.9.0 cross-index triangulation client family (Semantic Scholar + OpenAlex + Crossref) shipped intentionally byte-equivalent across 3 client modules for code locality; now that the family is stable, the dedup prevents sibling drift when threshold tuning, normalization rules, or throttle measurement need adjustment.

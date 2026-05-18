@@ -1,6 +1,6 @@
 # Academic Research Skills for Claude Code
 
-[![Version](https://img.shields.io/badge/version-v3.9.3-blue)](https://github.com/Imbad0202/academic-research-skills/releases/tag/v3.9.3)
+[![Version](https://img.shields.io/badge/version-v3.9.4-blue)](https://github.com/Imbad0202/academic-research-skills/releases/tag/v3.9.4)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![Sponsor](https://img.shields.io/badge/sponsor-Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://buymeacoffee.com/crucify020v)
 
@@ -299,6 +299,10 @@ https://github.com/Imbad0202/academic-research-skills
 ---
 
 ## 更新紀錄
+
+### v3.9.4（2026-05-18）— #135 時序驗證層（advisory）
+
+> Phase 4 → 5 邊界新增決定性 advisory verifier，涵蓋 5 種時序失效模式（P1 回顧算術、P2 時代錯置引用、P3 比較基準未實體化、P4 因果倒置、P5 現在式指示語）。新 Phase 2 sibling `timeline_extraction_agent` 擁有 `phase2_investigation/timeline.yaml` + `phase2_investigation/citation_provenance.yaml`。驗證腳本 `scripts/temporal_integrity_audit.py` 執行 5 道確定性 pass。M3 時序完整性鐵律加入 `report_compiler_agent` + `draft_writer_agent`。M6-minimal：Crossref `issued` + pdftotext cover 第一手驗證。M7-minimal：日期出處 + 比較基準實體化。M5-stub：僅使用者宣告的 `version_family_id`。`literature_corpus_entry`、`claim_audit_result`、`claim_intent_manifest` 零修改。`bibliography_agent` 未改動（F2 不變量）。3 個新 sidecar schema。覆蓋率估計：55-70% 基準 / 含 M7 minimal 65-75%。1549 passed（+44 新測試、0 regression）。
 
 ### v3.9.3（2026-05-18）— #128 housekeeping（client utility 抽出 + resolver dedup）
 
