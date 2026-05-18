@@ -137,6 +137,86 @@ def _next_finding_id(findings: list[dict]) -> int:
     return max(counter) + 1
 
 
+def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
+    """P1 Mode 1 future-as-past arithmetic.
+
+    Pattern A: retrospective claim '(as of X) ... had already (Y)'; violation when event Y > anchor X.
+    Pattern B: prospective claim 'X (will be) ... (as of Y)'; violation when event X <= anchor Y.
+
+    If multiple violations match in the same sentence, emit the one with the largest
+    |event.start - anchor.end| gap (most clearly impossible).
+    """
+    for sentence in re.split(r"(?<=[.!?])\s+", draft):
+        violations = []
+        m_a = PATTERN_A.search(sentence)
+        if m_a:
+            anchor_raw = m_a.group("anchor")
+            event_raw = m_a.group("event")
+            try:
+                anchor_start, anchor_end = _date_to_interval(anchor_raw)
+                event_start, event_end = _date_to_interval(event_raw)
+            except ValueError:
+                pass
+            else:
+                if event_start > anchor_end:
+                    violations.append(("A", anchor_raw, event_raw,
+                                       anchor_start, anchor_end, event_start, event_end))
+
+        m_b = PATTERN_B.search(sentence)
+        if m_b:
+            event_raw = m_b.group("event")
+            anchor_raw = m_b.group("anchor")
+            try:
+                anchor_start, anchor_end = _date_to_interval(anchor_raw)
+                event_start, event_end = _date_to_interval(event_raw)
+            except ValueError:
+                pass
+            else:
+                # Pattern B violation: forthcoming event already past at anchor time
+                if event_start <= anchor_end:
+                    violations.append(("B", anchor_raw, event_raw,
+                                       anchor_start, anchor_end, event_start, event_end))
+
+        if not violations:
+            continue
+
+        # Emit one finding per sentence — pick the largest-gap violation.
+        violations.sort(key=lambda v: abs(_date_diff_days(v[5], v[4])), reverse=True)
+        which, anchor_raw, event_raw, anchor_start, anchor_end, event_start, event_end = violations[0]
+        rationale = (
+            f"Pattern {which}: anchor '{anchor_raw}' ({anchor_start}..{anchor_end}) "
+            f"{'before' if which == 'A' else 'after'} event '{event_raw}' "
+            f"({event_start}..{event_end}); "
+            + ("event has not yet occurred at anchor time" if which == "A"
+               else "forthcoming event already past at anchor time")
+        )
+        findings.append({
+            "finding_id": f"TF-{_next_finding_id(findings):03d}",
+            "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
+            "severity": "HIGH",
+            "mode": 1,
+            "block_eligible": True,
+            "draft_locator": {
+                "file": "phase4_composition/draft.md",
+                "line": 1,
+                "sentence": sentence.strip(),
+            },
+            "matched_span": None,
+            "bound_refs": [],
+            "bound_event": None,
+            "bound_dates": {
+                "left": {"role": "anchor",
+                         "value": f"{anchor_start}..{anchor_end}",
+                         "source": "draft_capture", "ref_slug": None},
+                "right": {"role": "event",
+                          "value": f"{event_start}..{event_end}",
+                          "source": "draft_capture", "ref_slug": None},
+            },
+            "rationale": rationale,
+            "suggested_fix": "Restate the claim to match the anchor's true time horizon, or hedge.",
+        })
+
+
 def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> None:
     """P2 Mode 2 version-as-evidence-past anachronism.
 
@@ -144,7 +224,9 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
     1. Lookup slug in timeline sources. Absent → emit TEMPORAL-METADATA-MISSING.
     2. Lookup effective_date_range. Absent or start unverified/low → emit METADATA-MISSING.
     3. Find nearest event date in ±200 chars around the ref marker.
-    4. Predicate: start > event.end → emit TEMPORAL-ANACHRONISTIC-CITATION.
+    4. Predicate (future-version): start > event.end → emit TEMPORAL-ANACHRONISTIC-CITATION.
+    5. Predicate (superseded-version): end < event.start (only when end.open_ended: false
+       and end.value known and confidence high/medium) → emit TEMPORAL-ANACHRONISTIC-CITATION.
     """
     sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
 
@@ -152,11 +234,9 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
         slug = m_ref.group(1)
         source = sources_by_key.get(slug)
 
-        next_id = _next_finding_id(findings)
-
         if source is None:
             findings.append({
-                "finding_id": f"TF-{next_id:03d}",
+                "finding_id": f"TF-{_next_finding_id(findings):03d}",
                 "finding_kind": "TEMPORAL-METADATA-MISSING",
                 "severity": "LOW",
                 "mode": None,
@@ -178,7 +258,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
         edr = source.get("effective_date_range")
         if not edr:
             findings.append({
-                "finding_id": f"TF-{next_id:03d}",
+                "finding_id": f"TF-{_next_finding_id(findings):03d}",
                 "finding_kind": "TEMPORAL-METADATA-MISSING",
                 "severity": "LOW",
                 "mode": None,
@@ -200,7 +280,7 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
         start_conf = start.get("provenance", {}).get("confidence")
         if start.get("value") is None or start_conf in {"unverified", "low"}:
             findings.append({
-                "finding_id": f"TF-{next_id:03d}",
+                "finding_id": f"TF-{_next_finding_id(findings):03d}",
                 "finding_kind": "TEMPORAL-METADATA-MISSING",
                 "severity": "LOW",
                 "mode": None,
@@ -244,10 +324,10 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
         except ValueError:
             continue
 
-        # Future-version check: start > event.end
+        # Future-version check (spec §3.2 P2 step 5 first clause): start > event.end
         if edr_start_start > event_end:
             findings.append({
-                "finding_id": f"TF-{next_id:03d}",
+                "finding_id": f"TF-{_next_finding_id(findings):03d}",
                 "finding_kind": "TEMPORAL-ANACHRONISTIC-CITATION",
                 "severity": "HIGH",
                 "mode": 2,
@@ -267,6 +347,41 @@ def _pass_2_anachronism(draft: str, timeline: dict, findings: list[dict]) -> Non
                 "suggested_fix": f"Cite the version of the source that was in effect during {event_raw}.",
             })
 
+        # Superseded-version check (spec §3.2 P2 step 5 second clause)
+        end = edr.get("end", {})
+        end_open_ended = end.get("open_ended", False)
+        end_value = end.get("value")
+        end_conf = end.get("provenance", {}).get("confidence")
+        if (not end_open_ended and end_value is not None
+                and end_conf in {"high", "medium"}):
+            try:
+                _, edr_end_end = _date_to_interval(end_value)
+            except ValueError:
+                pass
+            else:
+                if edr_end_end < event_start:
+                    findings.append({
+                        "finding_id": f"TF-{_next_finding_id(findings):03d}",
+                        "finding_kind": "TEMPORAL-ANACHRONISTIC-CITATION",
+                        "severity": "HIGH",
+                        "mode": 2,
+                        "block_eligible": True,
+                        "draft_locator": {
+                            "file": "phase4_composition/draft.md", "line": 1,
+                            "sentence": _sentence_around(draft, m_ref.start()),
+                        },
+                        "matched_span": None,
+                        "bound_refs": [{"ref_slug": slug, "timeline_entry": slug}],
+                        "bound_event": {"event_id": None, "date": f"{event_start}..{event_end}"},
+                        "bound_dates": None,
+                        "rationale": (
+                            f"{slug} effective_date_range ended {end_value}, before cited "
+                            f"event {event_raw} ({event_start}..{event_end}). Cited version was "
+                            f"superseded before the event."
+                        ),
+                        "suggested_fix": f"Cite the version of the source that was in effect during {event_raw}.",
+                    })
+
 
 def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None:
     """P3 Mode 3 comparator unmaterialized.
@@ -275,6 +390,9 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
     Form C: 'edition of YYYY'). For each match, binds version_family_id via the
     nearest <!--ref:slug--> in the sentence/paragraph. If no timeline entry in that
     family has a matching year, emits TEMPORAL-COMPARATOR-UNMATERIALIZED.
+
+    Per spec §3.2 P3: each match independently emits up to one finding per match;
+    there is no per-sentence cap.
     """
     sources_by_key = {s["citation_key"]: s for s in timeline.get("sources", [])}
     sources_by_family: dict[str, list[dict]] = {}
@@ -284,10 +402,7 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
             sources_by_family.setdefault(fam, []).append(s)
 
     for sentence in re.split(r"(?<=[.!?])\s+", draft):
-        sentence_emitted = False
         for pattern_name, pat in [("A", COMPARATOR_FORM_A), ("B", COMPARATOR_FORM_B), ("C", COMPARATOR_FORM_C)]:
-            if sentence_emitted:
-                break
             for m in pat.finditer(sentence):
                 # Resolve version_family_id via ref marker in sentence
                 refs_in_sentence = REF_MARKER_PATTERN.findall(sentence)
@@ -321,9 +436,8 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
                         break
 
                 if not matched:
-                    next_id = _next_finding_id(findings)
                     findings.append({
-                        "finding_id": f"TF-{next_id:03d}",
+                        "finding_id": f"TF-{_next_finding_id(findings):03d}",
                         "finding_kind": "TEMPORAL-COMPARATOR-UNMATERIALIZED",
                         "severity": "MEDIUM",
                         "mode": 3,
@@ -350,8 +464,7 @@ def _pass_3_comparator(draft: str, timeline: dict, findings: list[dict]) -> None
                             f"or rewrite the prose to remove the comparator claim."
                         ),
                     })
-                    sentence_emitted = True
-                    break
+                    # do NOT break — spec allows one finding per match
 
 
 def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
@@ -400,9 +513,8 @@ def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
             if not violated:
                 continue
 
-            next_id = _next_finding_id(findings)
             findings.append({
-                "finding_id": f"TF-{next_id:03d}",
+                "finding_id": f"TF-{_next_finding_id(findings):03d}",
                 "finding_kind": "TEMPORAL-CAUSAL-INVERSION",
                 "severity": "MEDIUM",
                 "mode": 4,
@@ -438,8 +550,6 @@ def _pass_4_causal(draft: str, timeline: dict, findings: list[dict]) -> None:
 
 def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
     """P5 Mode 5 time-bomb deictic regex lint."""
-    next_id = _next_finding_id(findings)
-
     # Build a line index for draft_locator
     lines = draft.splitlines(keepends=True)
     offsets: list[int] = []
@@ -458,7 +568,7 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
         line_text = lines[line_no].rstrip("\n") if line_no < len(lines) else ""
 
         findings.append({
-            "finding_id": f"TF-{next_id:03d}",
+            "finding_id": f"TF-{_next_finding_id(findings):03d}",
             "finding_kind": "TEMPORAL-DEICTIC",
             "severity": "LOW",
             "mode": 5,
@@ -479,90 +589,6 @@ def _pass_5_deictic(draft: str, findings: list[dict]) -> None:
             "rationale": f"Deictic phrase '{m.group(0)}' anchors claim to writing time; rewrite to specific date or version identifier.",
             "suggested_fix": "Replace with 'as of YYYY-MM-DD' or a specific edition/year reference.",
         })
-        next_id += 1
-
-
-def _pass_1_arithmetic(draft: str, findings: list[dict]) -> None:
-    """P1 Mode 1 future-as-past arithmetic.
-
-    Pattern A: retrospective claim '(as of X) ... had already (Y)'; violation when event Y > anchor X.
-    Pattern B: prospective claim 'X (will be) ... (as of Y)'; violation when event X <= anchor Y.
-
-    If multiple violations match in the same sentence, emit the one with the largest
-    |event.start - anchor.end| gap (most clearly impossible).
-    """
-    next_id = _next_finding_id(findings)
-
-    for sentence in re.split(r"(?<=[.!?])\s+", draft):
-        violations = []
-        m_a = PATTERN_A.search(sentence)
-        if m_a:
-            anchor_raw = m_a.group("anchor")
-            event_raw = m_a.group("event")
-            try:
-                anchor_start, anchor_end = _date_to_interval(anchor_raw)
-                event_start, event_end = _date_to_interval(event_raw)
-            except ValueError:
-                pass
-            else:
-                if event_start > anchor_end:
-                    violations.append(("A", anchor_raw, event_raw,
-                                       anchor_start, anchor_end, event_start, event_end))
-
-        m_b = PATTERN_B.search(sentence)
-        if m_b:
-            event_raw = m_b.group("event")
-            anchor_raw = m_b.group("anchor")
-            try:
-                anchor_start, anchor_end = _date_to_interval(anchor_raw)
-                event_start, event_end = _date_to_interval(event_raw)
-            except ValueError:
-                pass
-            else:
-                # Pattern B violation: forthcoming event already past at anchor time
-                if event_start <= anchor_end:
-                    violations.append(("B", anchor_raw, event_raw,
-                                       anchor_start, anchor_end, event_start, event_end))
-
-        if not violations:
-            continue
-
-        # Emit one finding per sentence — pick the largest-gap violation.
-        violations.sort(key=lambda v: abs(_date_diff_days(v[5], v[4])), reverse=True)
-        which, anchor_raw, event_raw, anchor_start, anchor_end, event_start, event_end = violations[0]
-        rationale = (
-            f"Pattern {which}: anchor '{anchor_raw}' ({anchor_start}..{anchor_end}) "
-            f"{'before' if which == 'A' else 'after'} event '{event_raw}' "
-            f"({event_start}..{event_end}); "
-            + ("event has not yet occurred at anchor time" if which == "A"
-               else "forthcoming event already past at anchor time")
-        )
-        findings.append({
-            "finding_id": f"TF-{next_id:03d}",
-            "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
-            "severity": "HIGH",
-            "mode": 1,
-            "block_eligible": True,
-            "draft_locator": {
-                "file": "phase4_composition/draft.md",
-                "line": 1,
-                "sentence": sentence.strip(),
-            },
-            "matched_span": None,
-            "bound_refs": [],
-            "bound_event": None,
-            "bound_dates": {
-                "left": {"role": "anchor",
-                         "value": f"{anchor_start}..{anchor_end}",
-                         "source": "draft_capture", "ref_slug": None},
-                "right": {"role": "event",
-                          "value": f"{event_start}..{event_end}",
-                          "source": "draft_capture", "ref_slug": None},
-            },
-            "rationale": rationale,
-            "suggested_fix": "Restate the claim to match the anchor's true time horizon, or hedge.",
-        })
-        next_id += 1
 
 
 def audit(draft: str, timeline: dict, citation_provenance: dict,
