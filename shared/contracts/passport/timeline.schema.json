@@ -7,13 +7,15 @@
   "additionalProperties": false,
   "required": ["schema_version", "sources"],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.0", "description": "Schema-internal version. v3.9.4 ships 1.0. Future drafts bump this constant to drive explicit migration." },
     "sources": {
       "type": "array",
+      "description": "Per-source temporal facts (publication date, effective range, supersession chain). Each entry joins to literature_corpus[] via citation_key. Per spec §3.1.",
       "items": { "$ref": "#/$defs/timeline_source_entry" }
     },
     "events": {
       "type": "array",
+      "description": "Events referenced in prose without a bibliographic citation (e.g., 'law repealed in 2024'). Optional; absent or empty when no such events exist. Per spec §3.1 + §4 join key discipline.",
       "items": { "$ref": "#/$defs/timeline_event_entry" }
     }
   },
@@ -25,7 +27,7 @@
       "properties": {
         "value": { "type": ["string", "null"] },
         "precision": { "enum": ["day", "month", "year", "interval", "unknown"] },
-        "open_ended": { "type": "boolean" },
+        "open_ended": { "type": "boolean", "description": "True ONLY on effective_date_range.end when the source is still in force (verifier treats as +∞). MUST be absent or false on any other date. False or absent with value:null + precision:unknown means missing data (verifier emits TEMPORAL-METADATA-MISSING). Per spec §3.1 date shape table." },
         "provenance": { "$ref": "#/$defs/provenance_object" }
       }
     },
@@ -46,7 +48,7 @@
       "required": ["citation_key", "type"],
       "properties": {
         "citation_key": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_:-]*$" },
-        "type": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1, "description": "Free-form classification string (e.g., 'institutional-document', 'policy', 'standard'). No closed vocabulary at v1.0; v3.10 may introduce one. Per spec §3.1 sources entry shape." },
         "published_date": { "$ref": "#/$defs/date_object" },
         "effective_date_range": {
           "type": "object",
