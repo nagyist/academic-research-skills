@@ -27,6 +27,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -36,6 +37,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = REPO_ROOT / "shared/contracts/passport"
+
+BIBLIOGRAPHY_AGENT_PATH = REPO_ROOT / "deep-research/agents/bibliography_agent.md"
+BIBLIOGRAPHY_AGENT_SHA256 = "1d34ef9cfcd26afebebd19ee199ff1c5b1d4364dd79a1a2de5e5220a060539f4"  # v3.9.3 baseline; F2 invariant per spec §3.4 + §3.6
 
 
 def _validate(yaml_path: Path, schema_path: Path) -> list[str]:
@@ -86,6 +90,27 @@ def _check_supersession_cycles(timeline_path: Path) -> list[str]:
     return errors
 
 
+def _check_bibliography_agent_unchanged() -> list[str]:
+    """Invariant 8: bibliography_agent.md must match v3.9.3 baseline sha256 (F2 boundary invariant).
+
+    Per spec §3.4 + §3.6 F2 closure: M6 citation provenance and M5-stub version-family awareness
+    are owned by timeline_extraction_agent, NOT bibliography_agent. This lint enforces the invariant
+    that bibliography_agent.md is unchanged in v3.9.4. If a future v3.x release legitimately modifies
+    bibliography_agent.md, the BIBLIOGRAPHY_AGENT_SHA256 constant above is updated in the same commit.
+    """
+    if not BIBLIOGRAPHY_AGENT_PATH.exists():
+        return [f"missing: {BIBLIOGRAPHY_AGENT_PATH}"]
+    actual = hashlib.sha256(BIBLIOGRAPHY_AGENT_PATH.read_bytes()).hexdigest()
+    if actual != BIBLIOGRAPHY_AGENT_SHA256:
+        return [
+            f"bibliography_agent.md modified — v3.9.4 F2 invariant violated. "
+            f"expected sha256 {BIBLIOGRAPHY_AGENT_SHA256}, got {actual}. "
+            f"Per spec §3.4 + §3.6, M6 citation provenance and M5-stub version-family awareness "
+            f"are owned by timeline_extraction_agent, NOT bibliography_agent."
+        ]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeline", type=Path, required=True)
@@ -98,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     errors.extend(_validate(args.citation_provenance, SCHEMAS / "citation_provenance.schema.json"))
     errors.extend(_validate(args.temporal_audit, SCHEMAS / "temporal_audit_results.schema.json"))
     errors.extend(_check_supersession_cycles(args.timeline))
+    errors.extend(_check_bibliography_agent_unchanged())
 
     if errors:
         for e in errors:

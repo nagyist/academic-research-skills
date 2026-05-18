@@ -344,3 +344,60 @@ def test_lint_detects_supersession_cycle(tmp_path):
     )
     assert result.returncode == 1, f"expected exit 1 for cycle, got {result.returncode}; stderr={result.stderr!r}"
     assert "cycle" in result.stderr.lower(), f"expected 'cycle' in stderr, got: {result.stderr!r}"
+
+
+def test_lint_bibliography_agent_unchanged(tmp_path):
+    """F2 invariant: bibliography_agent.md unmodified passes the lint."""
+    timeline = tmp_path / "timeline.yaml"
+    timeline.write_text(yaml.safe_dump({"schema_version": "1.0", "sources": [], "events": []}))
+    provenance = tmp_path / "citation_provenance.yaml"
+    provenance.write_text(yaml.safe_dump({
+        "schema_version": "1.0", "audit_run_id": "2026-05-18T12:34:56Z-a1b2", "entries": []
+    }))
+    audit = tmp_path / "temporal_audit_results.yaml"
+    audit.write_text(yaml.safe_dump({
+        "schema_version": "1.0", "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18", "findings": []
+    }))
+
+    result = subprocess.run(
+        [_sys.executable, str(SCRIPT),
+         "--timeline", str(timeline),
+         "--citation-provenance", str(provenance),
+         "--temporal-audit", str(audit)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"baseline mismatch — bibliography_agent.md was modified? stderr={result.stderr}"
+
+
+def test_lint_bibliography_agent_modified_fails(tmp_path, monkeypatch):
+    """F2 invariant: modified bibliography_agent.md fails the lint.
+
+    Uses monkeypatch to point BIBLIOGRAPHY_AGENT_SHA256 at a wrong value, then runs the
+    lint as a function (not subprocess) so we can override the module constant.
+    """
+    timeline = tmp_path / "timeline.yaml"
+    timeline.write_text(yaml.safe_dump({"schema_version": "1.0", "sources": [], "events": []}))
+    provenance = tmp_path / "citation_provenance.yaml"
+    provenance.write_text(yaml.safe_dump({
+        "schema_version": "1.0", "audit_run_id": "2026-05-18T12:34:56Z-a1b2", "entries": []
+    }))
+    audit = tmp_path / "temporal_audit_results.yaml"
+    audit.write_text(yaml.safe_dump({
+        "schema_version": "1.0", "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18", "findings": []
+    }))
+
+    # Import the lint module and monkeypatch the expected sha256 to a bogus value
+    import importlib.util
+    spec_loader = importlib.util.spec_from_file_location("v3_9_4_lint", SCRIPT)
+    lint_mod = importlib.util.module_from_spec(spec_loader)
+    spec_loader.loader.exec_module(lint_mod)
+    monkeypatch.setattr(lint_mod, "BIBLIOGRAPHY_AGENT_SHA256", "0" * 64)
+
+    exit_code = lint_mod.main([
+        "--timeline", str(timeline),
+        "--citation-provenance", str(provenance),
+        "--temporal-audit", str(audit),
+    ])
+    assert exit_code == 1, "expected exit 1 when sha256 baseline mismatches"
