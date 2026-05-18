@@ -69,16 +69,18 @@ def _check_supersession_cycles(timeline_path: Path) -> list[str]:
     sources = {s["citation_key"]: s for s in data.get("sources", []) if "citation_key" in s}
     errors: list[str] = []
     for origin_key in sources:
-        visited: list[str] = []
+        visited_set: set[str] = set()
+        visited_path: list[str] = []
         cur = origin_key
         while cur is not None:
-            if cur in visited:
+            if cur in visited_set:
                 errors.append(
                     f"supersession cycle detected starting at {origin_key}: "
-                    f"{' -> '.join(visited)} -> {cur}"
+                    f"{' -> '.join(visited_path)} -> {cur}"
                 )
                 break
-            visited.append(cur)
+            visited_set.add(cur)
+            visited_path.append(cur)
             entry = sources.get(cur)
             cur = entry.get("supersedes") if entry else None
     return errors
