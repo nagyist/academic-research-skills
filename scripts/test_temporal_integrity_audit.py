@@ -279,3 +279,52 @@ def test_audit_writes_markdown_report(tmp_path):
     md = out_md.read_text()
     assert "# Temporal Audit Results" in md
     assert "TEMPORAL-DEICTIC" in md
+
+
+def test_metadata_missing_fixture(tmp_path):
+    """METADATA-MISSING fires when ref's timeline source lacks effective_date_range."""
+    fixture_dir = FIXTURE_ROOT / "metadata_missing_p2"
+    out = tmp_path / "temporal_audit_results.yaml"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         "--draft", str(fixture_dir / "draft.md"),
+         "--timeline", str(fixture_dir / "timeline.yaml"),
+         "--citation-provenance", str(fixture_dir / "citation_provenance.yaml"),
+         "--output", str(out),
+         "--report-reference-date", "2026-05-18",
+         "--audit-run-id", "2026-05-18T12:34:56Z-a1b2"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    actual = yaml.safe_load(out.read_text())
+    expected = yaml.safe_load((fixture_dir / "expected_temporal_audit_results.yaml").read_text())
+    assert actual == expected
+    # Spec contract: METADATA-MISSING for the ref
+    metadata_missing = [f for f in actual["findings"] if f["finding_kind"] == "TEMPORAL-METADATA-MISSING"]
+    assert len(metadata_missing) == 1
+    assert metadata_missing[0]["bound_refs"][0]["ref_slug"] == "handbook-2024ed"
+
+
+def test_freeze_regression_byte_identical_across_dates(tmp_path):
+    """CC6: report_reference_date is frozen — output must be byte-identical regardless of wall-clock today.
+
+    This test does NOT depend on time.time() or datetime.now() behavior, because the verifier itself
+    uses the --report-reference-date arg. The regression asserts the SAME --report-reference-date
+    produces byte-identical output across two independent runs.
+    """
+    fixture_dir = FIXTURE_ROOT / "report_reference_date_freeze"
+    out1 = tmp_path / "run1.yaml"
+    out2 = tmp_path / "run2.yaml"
+    for out in [out1, out2]:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT),
+             "--draft", str(fixture_dir / "draft.md"),
+             "--timeline", str(fixture_dir / "timeline.yaml"),
+             "--citation-provenance", str(fixture_dir / "citation_provenance.yaml"),
+             "--output", str(out),
+             "--report-reference-date", "2026-05-18",
+             "--audit-run-id", "2026-05-18T12:34:56Z-a1b2"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, f"stderr={result.stderr}"
+    assert out1.read_bytes() == out2.read_bytes(), "byte-identical regression failed"
