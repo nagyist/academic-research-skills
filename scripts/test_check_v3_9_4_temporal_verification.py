@@ -214,3 +214,59 @@ def test_temporal_audit_schema_accepts_6_finding_kinds(finding_kind, mode, sever
         ],
     }
     jsonschema.validate(example, schema)
+
+
+def test_temporal_audit_p2_requires_bound_event():
+    """P2 anachronism MUST have bound_event non-null per spec §3.2 per-kind map."""
+    schema = _load_schema("temporal_audit_results.schema.json")
+    bad = {
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18",
+        "findings": [
+            {
+                "finding_id": "TF-001",
+                "finding_kind": "TEMPORAL-ANACHRONISTIC-CITATION",
+                "severity": "HIGH",
+                "mode": 2,
+                "block_eligible": True,
+                "draft_locator": {"file": "x", "line": 1, "sentence": "x"},
+                "matched_span": None,
+                "bound_refs": [{"ref_slug": "x", "timeline_entry": "x"}],
+                "bound_event": None,  # invalid for P2
+                "bound_dates": None,
+                "rationale": "r",
+                "suggested_fix": None,
+            }
+        ],
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema)
+
+
+def test_temporal_audit_p1_requires_bound_dates():
+    """P1 arithmetic MUST have bound_dates non-null."""
+    schema = _load_schema("temporal_audit_results.schema.json")
+    bad = {
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18",
+        "findings": [
+            {
+                "finding_id": "TF-001",
+                "finding_kind": "TEMPORAL-ARITHMETIC-IMPOSSIBLE",
+                "severity": "HIGH",
+                "mode": 1,
+                "block_eligible": True,
+                "draft_locator": {"file": "x", "line": 1, "sentence": "x"},
+                "matched_span": None,
+                "bound_refs": [],
+                "bound_event": None,
+                "bound_dates": None,  # invalid for P1
+                "rationale": "r",
+                "suggested_fix": None,
+            }
+        ],
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, schema)

@@ -127,7 +127,65 @@
         },
         "rationale": { "type": "string", "minLength": 1 },
         "suggested_fix": { "type": ["string", "null"] }
-      }
+      },
+      "oneOf": [
+        {
+          "description": "P1 TEMPORAL-ARITHMETIC-IMPOSSIBLE: bound_dates required (anchor + event from Pattern A/B), mode==1.",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-ARITHMETIC-IMPOSSIBLE" },
+            "mode": { "const": 1 },
+            "bound_dates": { "not": { "type": "null" } }
+          },
+          "required": ["finding_kind", "mode", "bound_dates"]
+        },
+        {
+          "description": "P2 TEMPORAL-ANACHRONISTIC-CITATION: bound_refs>=1, bound_event non-null, mode==2.",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-ANACHRONISTIC-CITATION" },
+            "mode": { "const": 2 },
+            "bound_refs": { "minItems": 1 },
+            "bound_event": { "not": { "type": "null" } }
+          },
+          "required": ["finding_kind", "mode", "bound_refs", "bound_event"]
+        },
+        {
+          "description": "P3 TEMPORAL-COMPARATOR-UNMATERIALIZED: bound_refs>=1, matched_span non-null, mode==3.",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-COMPARATOR-UNMATERIALIZED" },
+            "mode": { "const": 3 },
+            "bound_refs": { "minItems": 1 },
+            "matched_span": { "not": { "type": "null" } }
+          },
+          "required": ["finding_kind", "mode", "bound_refs", "matched_span"]
+        },
+        {
+          "description": "P4 TEMPORAL-CAUSAL-INVERSION: bound_dates non-null, matched_span non-null, mode==4.",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-CAUSAL-INVERSION" },
+            "mode": { "const": 4 },
+            "bound_dates": { "not": { "type": "null" } },
+            "matched_span": { "not": { "type": "null" } }
+          },
+          "required": ["finding_kind", "mode", "bound_dates", "matched_span"]
+        },
+        {
+          "description": "P5 TEMPORAL-DEICTIC: bound_refs empty, matched_span non-null, mode==5.",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-DEICTIC" },
+            "mode": { "const": 5 },
+            "bound_refs": { "maxItems": 0 },
+            "matched_span": { "not": { "type": "null" } }
+          },
+          "required": ["finding_kind", "mode", "matched_span"]
+        },
+        {
+          "description": "TEMPORAL-METADATA-MISSING: no per-kind requirements (mode and bindings all permitted null).",
+          "properties": {
+            "finding_kind": { "const": "TEMPORAL-METADATA-MISSING" }
+          },
+          "required": ["finding_kind"]
+        }
+      ]
     },
     "bound_date_endpoint": {
       "type": "object",
