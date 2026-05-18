@@ -167,3 +167,50 @@ def test_citation_provenance_high_requires_both_sources():
     }
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(bad, schema)
+
+
+@pytest.mark.parametrize("finding_kind,mode,severity,bound_refs,bound_event,bound_dates,matched_span", [
+    ("TEMPORAL-ARITHMETIC-IMPOSSIBLE", 1, "HIGH", [], None,
+     {"left": {"role": "anchor", "value": "2025-03", "source": "draft_capture", "ref_slug": None},
+      "right": {"role": "event", "value": "2025-06", "source": "draft_capture", "ref_slug": None}},
+     None),
+    ("TEMPORAL-ANACHRONISTIC-CITATION", 2, "HIGH",
+     [{"ref_slug": "h2026", "timeline_entry": "h2026"}],
+     {"event_id": "e2022", "date": "2022-04-01..2022-12-31"}, None, None),
+    ("TEMPORAL-COMPARATOR-UNMATERIALIZED", 3, "MEDIUM",
+     [{"ref_slug": "s2020", "timeline_entry": "s2020"}], None, None,
+     {"text": "1998 edition", "char_start": 100, "char_end": 112}),
+    ("TEMPORAL-CAUSAL-INVERSION", 4, "MEDIUM",
+     [{"ref_slug": "a", "timeline_entry": "a"}, {"ref_slug": "b", "timeline_entry": "b"}],
+     None,
+     {"left": {"role": "left_arg", "value": "2026-03-01", "source": "timeline_ref", "ref_slug": "a"},
+      "right": {"role": "right_arg", "value": "2020-05-15", "source": "timeline_ref", "ref_slug": "b"}},
+     {"text": "A enabled B", "char_start": 0, "char_end": 11}),
+    ("TEMPORAL-DEICTIC", 5, "LOW", [], None, None,
+     {"text": "currently", "char_start": 0, "char_end": 9}),
+    ("TEMPORAL-METADATA-MISSING", None, "LOW", [], None, None, None),
+])
+def test_temporal_audit_schema_accepts_6_finding_kinds(finding_kind, mode, severity, bound_refs, bound_event, bound_dates, matched_span):
+    schema = _load_schema("temporal_audit_results.schema.json")
+    example = {
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18",
+        "findings": [
+            {
+                "finding_id": "TF-001",
+                "finding_kind": finding_kind,
+                "severity": severity,
+                "mode": mode,
+                "block_eligible": False,
+                "draft_locator": {"file": "phase4_composition/draft.md", "line": 1, "sentence": "x"},
+                "matched_span": matched_span,
+                "bound_refs": bound_refs,
+                "bound_event": bound_event,
+                "bound_dates": bound_dates,
+                "rationale": "r",
+                "suggested_fix": None,
+            }
+        ],
+    }
+    jsonschema.validate(example, schema)
