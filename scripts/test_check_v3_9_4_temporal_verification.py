@@ -308,3 +308,39 @@ def test_lint_exits_zero_on_clean_fixture(tmp_path):
         capture_output=True, text=True,
     )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+
+
+def test_lint_detects_supersession_cycle(tmp_path):
+    """Invariant 2 — supersession chain must have no cycles."""
+    timeline = tmp_path / "timeline.yaml"
+    timeline.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "sources": [
+            {"citation_key": "a", "type": "doc", "supersedes": "b", "superseded_by": None},
+            {"citation_key": "b", "type": "doc", "supersedes": "a", "superseded_by": None},
+        ],
+        "events": [],
+    }))
+    provenance = tmp_path / "citation_provenance.yaml"
+    provenance.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "entries": [],
+    }))
+    audit = tmp_path / "temporal_audit_results.yaml"
+    audit.write_text(yaml.safe_dump({
+        "schema_version": "1.0",
+        "audit_run_id": "2026-05-18T12:34:56Z-a1b2",
+        "report_reference_date": "2026-05-18",
+        "findings": [],
+    }))
+
+    result = subprocess.run(
+        [_sys.executable, str(SCRIPT),
+         "--timeline", str(timeline),
+         "--citation-provenance", str(provenance),
+         "--temporal-audit", str(audit)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1, f"expected exit 1 for cycle, got {result.returncode}; stderr={result.stderr!r}"
+    assert "cycle" in result.stderr.lower(), f"expected 'cycle' in stderr, got: {result.stderr!r}"

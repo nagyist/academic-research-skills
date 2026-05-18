@@ -54,6 +54,36 @@ def _validate(yaml_path: Path, schema_path: Path) -> list[str]:
         return [f"{yaml_path.name}: {exc}"]
 
 
+def _check_supersession_cycles(timeline_path: Path) -> list[str]:
+    """Invariant 2: supersession chain has no cycles.
+
+    Walks each source's `supersedes` chain. Records the visited set; if a citation_key
+    is revisited within the same walk, a cycle exists. Emits one error per cycle origin.
+    """
+    if not timeline_path.exists():
+        return []
+    try:
+        data = yaml.safe_load(timeline_path.read_text())
+    except Exception:
+        return []  # schema validation handles parse errors
+    sources = {s["citation_key"]: s for s in data.get("sources", []) if "citation_key" in s}
+    errors: list[str] = []
+    for origin_key in sources:
+        visited: list[str] = []
+        cur = origin_key
+        while cur is not None:
+            if cur in visited:
+                errors.append(
+                    f"supersession cycle detected starting at {origin_key}: "
+                    f"{' -> '.join(visited)} -> {cur}"
+                )
+                break
+            visited.append(cur)
+            entry = sources.get(cur)
+            cur = entry.get("supersedes") if entry else None
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeline", type=Path, required=True)
@@ -65,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     errors.extend(_validate(args.timeline, SCHEMAS / "timeline.schema.json"))
     errors.extend(_validate(args.citation_provenance, SCHEMAS / "citation_provenance.schema.json"))
     errors.extend(_validate(args.temporal_audit, SCHEMAS / "temporal_audit_results.schema.json"))
+    errors.extend(_check_supersession_cycles(args.timeline))
 
     if errors:
         for e in errors:
